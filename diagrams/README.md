@@ -1,4 +1,13 @@
-# Architecture — request-flow diagrams
+# Architecture diagrams
+
+## How it works (non-technical)
+The four-step idea, for a general audience — used in Part 1 of the demo video.
+
+![How the assistant works](how-it-works.svg)
+
+---
+
+## Request-flow diagrams (detailed)
 
 Request-flow diagrams for the two embedded assistants. They run through the **same
 RAG engine** (nomic embeddings → ChromaDB → `llama3.2:3b`); the only differences are
