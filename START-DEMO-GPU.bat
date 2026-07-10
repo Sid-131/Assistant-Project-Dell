@@ -17,12 +17,15 @@ REM  Opt in to the Ollama/GPU engine (the default everywhere else is the
 REM  in-process CPU engine, so the office-laptop bundle is unaffected).
 set USE_OLLAMA=1
 
-REM  llama3.1:8b is the model that reliably returns the isi CLI command in a
-REM  fenced block. llama3.2:3b is ~4x faster but NEVER emits the CLI command,
-REM  even when told to. 4096 ctx keeps 26/33 of the 8B's layers on the GPU.
-set OLLAMA_CHAT_MODEL=llama3.1:8b
-set OLLAMA_NUM_CTX=4096
-set TOP_K_GPU=5
+REM  Measured on this RTX 3050, same SMB question, warm:
+REM    qwen2.5:3b-instruct  ~11s  + fenced `isi` CLI block   <-- best
+REM    llama3.1:8b          ~47s  + fenced `isi` CLI block
+REM    llama3.2:3b          ~13s  but NEVER emits the CLI command
+REM  8 full-length excerpts (not 5 truncated ones) is what makes the CLI block
+REM  reliable: verified 4/4 runs, ~13s each, 234-328 word answers.
+set OLLAMA_CHAT_MODEL=qwen2.5:3b-instruct
+set OLLAMA_NUM_CTX=8192
+set TOP_K_GPU=8
 
 echo.
 echo  ============================================================

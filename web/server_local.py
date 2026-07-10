@@ -26,14 +26,30 @@ from flask import Flask, Response, request, send_from_directory
 
 ROOT      = Path(__file__).parent
 MODELS    = ROOT.parent / "models_gguf"
-LLM_PATH  = MODELS / "llama3.2-3b-instruct.Q4_K_M.gguf"
+# Qwen2.5-3B emits the `isi` CLI command in a fenced block when it is given the
+# full excerpts (TOP_K=8, PROMPT_CHARS=1800); llama3.2:3b never does, at any
+# context size, on either engine. Same size and speed. First existing file wins.
+LLM_CANDIDATES = [MODELS / "qwen2.5-3b-instruct.Q4_K_M.gguf",
+                  MODELS / "llama3.2-3b-instruct.Q4_K_M.gguf",
+                  MODELS / "llama3.1-8b-instruct.Q4_K_M.gguf"]
+LLM_PATH  = (Path(os.environ["LLM_GGUF"]) if os.environ.get("LLM_GGUF")
+             else next((p for p in LLM_CANDIDATES if p.exists()), LLM_CANDIDATES[0]))
 EMB_PATH  = MODELS / "nomic-embed-text.f16.gguf"
 DB_DIR    = ROOT.parent / "app" / "chroma_db"
+
+
+def _chat_format_for(path: Path) -> str:
+    """Qwen uses ChatML; the Llama models use the llama-3 template."""
+    return "chatml" if "qwen" in path.name.lower() else "llama-3"
 TOP_K        = int(os.environ.get("TOP_K", "5"))      # CPU engine: prefill is expensive
 TOP_K_GPU    = int(os.environ.get("TOP_K_GPU", "5"))  # Ollama: prefill is cheap, but an 8B
                                                       # on a 6GB GPU wants a small context
 MIN_SCORE    = 0.35
-PROMPT_CHARS = 1300   # cap each excerpt fed to the LLM (less prefill = faster on CPU)
+PROMPT_CHARS = int(os.environ.get("PROMPT_CHARS", "1300"))  # CPU: trim, prefill is costly
+# GPU: don't trim. Chunks are capped at 1800 chars at ingest time, so 1800 = the
+# whole chunk. Truncating at 1300 was cutting `isi` commands off the end of an
+# excerpt, which is why the CLI block appeared only sometimes.
+PROMPT_CHARS_GPU = int(os.environ.get("PROMPT_CHARS_GPU", "1800"))
 MAX_TOKENS   = 500
 
 # Ollama is OPT-IN (set USE_OLLAMA=1). Default is the in-process CPU engine, so
@@ -46,8 +62,8 @@ OLLAMA_EMBED_MODEL = "nomic-embed-text"
 # fenced block; llama3.2:3b is faster but never does. Whichever is actually
 # pulled in Ollama wins (see _pick_ollama_model) — otherwise we fall back to
 # the in-process CPU engine rather than 404-ing on a missing model.
-OLLAMA_CHAT_MODEL  = os.environ.get("OLLAMA_CHAT_MODEL", "llama3.1:8b")
-OLLAMA_MODEL_ORDER = [OLLAMA_CHAT_MODEL, "llama3.1:8b", "llama3.2:3b"]
+OLLAMA_CHAT_MODEL  = os.environ.get("OLLAMA_CHAT_MODEL", "qwen2.5:3b-instruct")
+OLLAMA_MODEL_ORDER = [OLLAMA_CHAT_MODEL, "qwen2.5:3b-instruct", "llama3.1:8b", "llama3.2:3b"]
 # 4096 keeps 26/33 of an 8B's layers on a 6GB GPU; plenty for a 5-excerpt prompt.
 OLLAMA_NUM_CTX     = int(os.environ.get("OLLAMA_NUM_CTX", "4096"))
 
@@ -132,13 +148,13 @@ def _load_models():
         _backend = "llamacpp"
         from llama_cpp import Llama
         n_threads = max(2, (os.cpu_count() or 4))
-        print("Engine: in-process llama-cpp (CPU)")
+        print(f"Engine: in-process llama-cpp (CPU) — {LLM_PATH.name}")
         print("Loading embedding model...")
         _emb = Llama(model_path=str(EMB_PATH), embedding=True, n_ctx=2048,
                      n_threads=n_threads, verbose=False)
         print("Loading language model... this takes a moment")
         _llm = Llama(model_path=str(LLM_PATH), n_ctx=8192, n_threads=n_threads,
-                     chat_format="llama-3", verbose=False)
+                     chat_format=_chat_format_for(LLM_PATH), verbose=False)
 
     db = chromadb.PersistentClient(path=str(DB_DIR))
     _col = db.get_or_create_collection("onefs_docs")
@@ -237,7 +253,8 @@ def chat():
                     seen.add(fn)
                     sources.append(prettify(fn))
 
-            ctx_block = "\n\n---\n\n".join(d[:PROMPT_CHARS] for d in excerpts)
+            pc = PROMPT_CHARS_GPU if _backend == "ollama" else PROMPT_CHARS
+            ctx_block = "\n\n---\n\n".join(d[:pc] for d in excerpts)
             loc = f"(The user is currently viewing {context}.)\n" if context else ""
             user_msg = (f"{loc}Use ONLY these OneFS documentation excerpts to answer.\n\n"
                         f"{ctx_block}\n\nQuestion: {question}")
