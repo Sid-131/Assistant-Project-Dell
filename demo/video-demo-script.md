@@ -15,12 +15,12 @@ Architecture first (plain-English), then the live demo of both platforms.
 
 ### SCENE A1 — What this is (0:00–0:20)
 - **Screen:** Title card, then the two consoles (WebUI + InsightIQ) side by side, dimmed.
-- **VO:** "This is the PowerScale Admin Assistant — an AI helper built into the two places a storage admin already works: the OneFS console, and InsightIQ. What you'll see is a working prototype of that feature."
+- **VO:** "This is the PowerScale Admin Assistant — an AI helper built into the two places a storage admin already works: the OneFS console, and InsightIQ, This is on the customer end, it will help them to guide on the GUI and troubleshoot. What you'll see is a working prototype of that feature."
 - **Caption:** `A prototype of an embedded PowerScale feature`
 
 ### SCENE A2 — The idea, in plain terms (0:20–0:45)
 - **Screen:** `diagrams/how-it-works.svg` — reveal one box at a time:
-  **① You ask** → **② It looks up the answer in Dell's official docs** → **③ A small AI on the cluster explains it in plain English** → **④ You get the answer, with its sources.**
+  **① You ask** → **② It looks up the answer in public available Dell's official docs** → **③ A small AI on the cluster explains it in plain English** → **④ You get the answer, with its sources.**
 - **VO:** "The idea is simple. You ask in plain language. Instead of *guessing*, the assistant looks it up in Dell's own documentation. A small AI — running right on the cluster — turns those pages into a clear answer. And it always shows the sources it used."
 - **Caption:** `Grounded in Dell's docs · runs on the cluster · always cited`
 
@@ -62,7 +62,7 @@ Architecture first (plain-English), then the live demo of both platforms.
 
 ### SCENE 7 — Close (3:20–3:45)
 - **Screen:** Quick cuts of both consoles, then the black `START` window.
-- **VO:** "Grounded in Dell's own docs. Cited every time. And 100% local — nothing ever leaves the cluster. An expert admin, in the console, at 2 a.m."
+- **VO:** "Grounded in Dell's own official docs. Cited every time. And 100% local — nothing ever leaves the cluster. An expert admin, in the console, at 2 a.m. and gets update with every release."
 - **Caption:** `Runs on the cluster · nothing leaves · always cited`
 - **End card:** *PowerScale Admin Assistant — prototype.*
 
