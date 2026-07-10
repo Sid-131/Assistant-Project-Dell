@@ -11,7 +11,7 @@ Architecture first (plain-English), then the live demo of both platforms.
 
 ---
 
-## PART 1 · How it works (0:00–1:00) — non-technical
+## PART 1 · How it works (0:00–1:00) 
 
 ### SCENE A1 — What this is (0:00–0:20)
 - **Screen:** Title card, then the two consoles (WebUI + InsightIQ) side by side, dimmed.
