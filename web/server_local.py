@@ -30,18 +30,26 @@ LLM_PATH  = MODELS / "llama3.2-3b-instruct.Q4_K_M.gguf"
 EMB_PATH  = MODELS / "nomic-embed-text.f16.gguf"
 DB_DIR    = ROOT.parent / "app" / "chroma_db"
 TOP_K        = int(os.environ.get("TOP_K", "5"))      # CPU engine: prefill is expensive
-TOP_K_GPU    = int(os.environ.get("TOP_K_GPU", "10")) # Ollama/GPU: prefill ~1775 tok/s, so
-                                                      # retrieve more — richer, fuller answers
+TOP_K_GPU    = int(os.environ.get("TOP_K_GPU", "5"))  # Ollama: prefill is cheap, but an 8B
+                                                      # on a 6GB GPU wants a small context
 MIN_SCORE    = 0.35
 PROMPT_CHARS = 1300   # cap each excerpt fed to the LLM (less prefill = faster on CPU)
 MAX_TOKENS   = 500
 
+# Ollama is OPT-IN (set USE_OLLAMA=1). Default is the in-process CPU engine, so
+# the office-laptop bundle behaves identically whether or not Ollama happens to
+# be running there. START-DEMO-GPU.bat opts in on the GPU machine.
+USE_OLLAMA         = os.environ.get("USE_OLLAMA", "").strip().lower() not in ("", "0", "false", "no")
 OLLAMA_URL         = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_CHAT_MODEL  = os.environ.get("OLLAMA_CHAT_MODEL", "llama3.2:3b")
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
-# 8k suits the 3B (fits entirely in VRAM). A 7B/8B needs 4096 to keep more
-# layers on a 6GB GPU — set OLLAMA_NUM_CTX=4096 when using a bigger model.
-OLLAMA_NUM_CTX     = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
+# llama3.1:8b is the model that reliably returns the `isi` CLI command in a
+# fenced block; llama3.2:3b is faster but never does. Whichever is actually
+# pulled in Ollama wins (see _pick_ollama_model) — otherwise we fall back to
+# the in-process CPU engine rather than 404-ing on a missing model.
+OLLAMA_CHAT_MODEL  = os.environ.get("OLLAMA_CHAT_MODEL", "llama3.1:8b")
+OLLAMA_MODEL_ORDER = [OLLAMA_CHAT_MODEL, "llama3.1:8b", "llama3.2:3b"]
+# 4096 keeps 26/33 of an 8B's layers on a 6GB GPU; plenty for a 5-excerpt prompt.
+OLLAMA_NUM_CTX     = int(os.environ.get("OLLAMA_NUM_CTX", "4096"))
 
 SYSTEM_PROMPT = (
     "You are an expert Dell PowerScale / OneFS 9.12 storage administrator assistant.\n"
@@ -64,12 +72,29 @@ _backend = None          # "ollama" | "llamacpp"
 _load_lock = threading.Lock()
 
 
-def _ollama_up() -> bool:
+def _ollama_models():
+    """Names of models actually pulled in Ollama, or None if Ollama isn't up."""
     try:
-        urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=2)
-        return True
+        tags = json.load(urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=2))
+        return {m["name"] for m in tags.get("models", [])}
     except Exception:
-        return False
+        return None
+
+
+def _has(name: str, have) -> bool:
+    return name in have or f"{name}:latest" in have
+
+
+def _pick_ollama_model(have):
+    """First preferred chat model that is actually pulled; None if none are.
+
+    Guards the office laptop, where Ollama has llama3.1:8b but not llama3.2:3b —
+    asking for a missing model would 404 instead of just working.
+    """
+    for name in OLLAMA_MODEL_ORDER:
+        if _has(name, have):
+            return name
+    return None
 
 
 def _post(path: str, payload: dict, timeout: int = 300):
@@ -90,13 +115,20 @@ def _load():
 
 
 def _load_models():
-    global _llm, _emb, _col, _backend
+    global _llm, _emb, _col, _backend, OLLAMA_CHAT_MODEL
     import chromadb
 
-    if _ollama_up():
+    have = _ollama_models() if USE_OLLAMA else None
+    chat = _pick_ollama_model(have) if have is not None else None
+    if have is not None and chat and _has(OLLAMA_EMBED_MODEL, have):
         _backend = "ollama"
-        print(f"Engine: Ollama at {OLLAMA_URL} (GPU if available) — model {OLLAMA_CHAT_MODEL}")
+        OLLAMA_CHAT_MODEL = chat
+        print(f"Engine: Ollama at {OLLAMA_URL} (GPU if available) — model {chat}")
     else:
+        if have is not None:
+            print(f"Ollama is running but lacks the models it needs "
+                  f"(want one of {OLLAMA_MODEL_ORDER} + {OLLAMA_EMBED_MODEL}); "
+                  f"using the in-process engine instead.")
         _backend = "llamacpp"
         from llama_cpp import Llama
         n_threads = max(2, (os.cpu_count() or 4))
@@ -104,7 +136,7 @@ def _load_models():
         print("Loading embedding model...")
         _emb = Llama(model_path=str(EMB_PATH), embedding=True, n_ctx=2048,
                      n_threads=n_threads, verbose=False)
-        print("Loading language model (llama3.2:3b)... this takes a moment")
+        print("Loading language model... this takes a moment")
         _llm = Llama(model_path=str(LLM_PATH), n_ctx=8192, n_threads=n_threads,
                      chat_format="llama-3", verbose=False)
 

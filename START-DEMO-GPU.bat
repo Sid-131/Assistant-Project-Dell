@@ -13,6 +13,10 @@ REM      a full, cited answer comes back in ~12s instead of 2-3 minutes.
 REM ---------------------------------------------------------------------------
 set OLLAMA_LLM_LIBRARY=cuda_v12
 
+REM  Opt in to the Ollama/GPU engine (the default everywhere else is the
+REM  in-process CPU engine, so the office-laptop bundle is unaffected).
+set USE_OLLAMA=1
+
 REM  llama3.1:8b is the model that reliably returns the isi CLI command in a
 REM  fenced block. llama3.2:3b is ~4x faster but NEVER emits the CLI command,
 REM  even when told to. 4096 ctx keeps 26/33 of the 8B's layers on the GPU.
