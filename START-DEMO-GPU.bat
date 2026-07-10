@@ -13,6 +13,13 @@ REM      a full, cited answer comes back in ~12s instead of 2-3 minutes.
 REM ---------------------------------------------------------------------------
 set OLLAMA_LLM_LIBRARY=cuda_v12
 
+REM  llama3.1:8b is the model that reliably returns the isi CLI command in a
+REM  fenced block. llama3.2:3b is ~4x faster but NEVER emits the CLI command,
+REM  even when told to. 4096 ctx keeps 26/33 of the 8B's layers on the GPU.
+set OLLAMA_CHAT_MODEL=llama3.1:8b
+set OLLAMA_NUM_CTX=4096
+set TOP_K_GPU=5
+
 echo.
 echo  ============================================================
 echo    PowerScale AI Assistant  -  GPU demo  (Ollama + NVIDIA)
@@ -42,6 +49,8 @@ echo    Keep this window open.  Press Ctrl+C to stop.
 echo.
 
 start "" http://localhost:8501
-"%~dp0venv\Scripts\python.exe" "%~dp0web\server.py"
+REM server_local.py auto-detects Ollama and uses the GPU; it keeps the prompt
+REM that produces full answers with fenced isi CLI commands.
+"%~dp0venv\Scripts\python.exe" "%~dp0web\server_local.py"
 
 endlocal
