@@ -50,6 +50,6 @@ echo.
 echo  --^> Open http://localhost:8501 in your browser
 echo  --^> Press Ctrl+C in this window to stop
 echo.
-"%ROOT%venv\Scripts\python.exe" "%ROOT%web\server.py"
+"%ROOT%venv\Scripts\python.exe" "%ROOT%web\server_local.py"
 
 endlocal

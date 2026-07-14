@@ -4,17 +4,17 @@ PowerScale AI Assistant — backend for both prototypes.
     /            OneFS WebUI assistant
     /insightiq   InsightIQ assistant
 
-Picks its engine automatically:
+Two engines, same prompt (so the answers are identical):
 
-  * Ollama (http://localhost:11434) if it is running — uses the GPU, so a full
-    cited answer comes back in ~12s instead of minutes.
-  * llama-cpp-python in-process otherwise — the LLM runs *inside* this Python
-    process, so there is no separate executable for application-control policies
-    (Device Guard / WDAC / AppLocker) to block. This is the office-laptop path.
+  * in-process llama-cpp (default) — the LLM runs *inside* this Python process,
+    so there is no separate executable for application-control policies (Device
+    Guard / WDAC / AppLocker) to block. CPU-only; the office-laptop path.
+  * Ollama (opt-in via USE_OLLAMA=1) — offloads to a local GPU when present, so
+    a full cited answer comes back in ~12s instead of minutes. Falls back to the
+    in-process engine if Ollama isn't running or lacks the models.
 
-Either way the prompt is identical, so the answers are identical.
-
-Run:  python web/server_local.py
+Run:  python web/server_local.py            (CPU)
+      set USE_OLLAMA=1 && python ...         (GPU, see START-DEMO-GPU.bat)
 """
 import json
 import os
@@ -26,45 +26,42 @@ from flask import Flask, Response, request, send_from_directory
 
 ROOT      = Path(__file__).parent
 MODELS    = ROOT.parent / "models_gguf"
-# Qwen2.5-3B emits the `isi` CLI command in a fenced block when it is given the
-# full excerpts (TOP_K=8, PROMPT_CHARS=1800); llama3.2:3b never does, at any
-# context size, on either engine. Same size and speed. First existing file wins.
-LLM_CANDIDATES = [MODELS / "qwen2.5-3b-instruct.Q4_K_M.gguf",
-                  MODELS / "llama3.2-3b-instruct.Q4_K_M.gguf",
-                  MODELS / "llama3.1-8b-instruct.Q4_K_M.gguf"]
-LLM_PATH  = (Path(os.environ["LLM_GGUF"]) if os.environ.get("LLM_GGUF")
-             else next((p for p in LLM_CANDIDATES if p.exists()), LLM_CANDIDATES[0]))
 EMB_PATH  = MODELS / "nomic-embed-text.f16.gguf"
 DB_DIR    = ROOT.parent / "app" / "chroma_db"
 
+# GGUF the in-process (CPU) engine loads. A bundle ships exactly one of these;
+# first present wins. Qwen2.5-3B is preferred: given the full excerpts it emits
+# the `isi` CLI command in a fenced block, which llama3.2:3b never does. The
+# fallbacks keep an un-updated bundle booting whatever model it already has.
+LLM_CANDIDATES = [MODELS / "qwen2.5-3b-instruct.Q4_K_M.gguf",
+                  MODELS / "llama3.2-3b-instruct.Q4_K_M.gguf",
+                  MODELS / "llama3.1-8b-instruct.Q4_K_M.gguf"]
+LLM_PATH  = next((p for p in LLM_CANDIDATES if p.exists()), LLM_CANDIDATES[0])
 
-def _chat_format_for(path: Path) -> str:
-    """Qwen uses ChatML; the Llama models use the llama-3 template."""
-    return "chatml" if "qwen" in path.name.lower() else "llama-3"
-TOP_K        = int(os.environ.get("TOP_K", "5"))      # CPU engine: prefill is expensive
-TOP_K_GPU    = int(os.environ.get("TOP_K_GPU", "5"))  # Ollama: prefill is cheap, but an 8B
-                                                      # on a 6GB GPU wants a small context
-MIN_SCORE    = 0.35
-PROMPT_CHARS = int(os.environ.get("PROMPT_CHARS", "1300"))  # CPU: trim, prefill is costly
-# GPU: don't trim. Chunks are capped at 1800 chars at ingest time, so 1800 = the
-# whole chunk. Truncating at 1300 was cutting `isi` commands off the end of an
-# excerpt, which is why the CLI block appeared only sometimes.
+# Retrieval + prompt sizing. On CPU, prompt "prefill" dominates latency, so feed
+# fewer/trimmed excerpts; on the GPU prefill is ~40x faster, so feed more, full
+# excerpts (needed for the CLI command to survive intact — 1800 = whole chunk).
+TOP_K            = int(os.environ.get("TOP_K", "5"))
+TOP_K_GPU        = int(os.environ.get("TOP_K_GPU", "8"))
+PROMPT_CHARS     = int(os.environ.get("PROMPT_CHARS", "1300"))
 PROMPT_CHARS_GPU = int(os.environ.get("PROMPT_CHARS_GPU", "1800"))
-MAX_TOKENS   = 500
+MIN_SCORE        = 0.35
+MAX_TOKENS       = 500
 
-# Ollama is OPT-IN (set USE_OLLAMA=1). Default is the in-process CPU engine, so
-# the office-laptop bundle behaves identically whether or not Ollama happens to
-# be running there. START-DEMO-GPU.bat opts in on the GPU machine.
+# CPU threads. Leave headroom for the OS and — on a PowerScale node — the storage
+# workload, instead of grabbing every core (the "storage stays P0" governor).
+# Override with N_THREADS (e.g. a big node might set a fixed cap).
+N_THREADS = int(os.environ.get("N_THREADS", str(max(2, (os.cpu_count() or 4) - 2))))
+
+# Engine selection. Ollama (GPU) is OPT-IN via USE_OLLAMA=1, so the CPU bundle
+# behaves identically whether or not an Ollama tray happens to be running.
 USE_OLLAMA         = os.environ.get("USE_OLLAMA", "").strip().lower() not in ("", "0", "false", "no")
-OLLAMA_URL         = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL         = "http://localhost:11434"
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
-# llama3.1:8b is the model that reliably returns the `isi` CLI command in a
-# fenced block; llama3.2:3b is faster but never does. Whichever is actually
-# pulled in Ollama wins (see _pick_ollama_model) — otherwise we fall back to
-# the in-process CPU engine rather than 404-ing on a missing model.
 OLLAMA_CHAT_MODEL  = os.environ.get("OLLAMA_CHAT_MODEL", "qwen2.5:3b-instruct")
-OLLAMA_MODEL_ORDER = [OLLAMA_CHAT_MODEL, "qwen2.5:3b-instruct", "llama3.1:8b", "llama3.2:3b"]
-# 4096 keeps 26/33 of an 8B's layers on a 6GB GPU; plenty for a 5-excerpt prompt.
+# preferred chat models, override first; dedup keeps the override from repeating
+OLLAMA_MODEL_ORDER = list(dict.fromkeys(
+    [OLLAMA_CHAT_MODEL, "qwen2.5:3b-instruct", "llama3.1:8b", "llama3.2:3b"]))
 OLLAMA_NUM_CTX     = int(os.environ.get("OLLAMA_NUM_CTX", "4096"))
 
 SYSTEM_PROMPT = (
@@ -121,44 +118,38 @@ def _post(path: str, payload: dict, timeout: int = 300):
 
 
 def _load():
-    if _backend is not None:
-        return
-    # Guard against concurrent loads (background warm-up thread + first request).
+    """Load the retriever + engine once (idempotent; safe from concurrent callers)."""
+    global _llm, _emb, _col, _backend, OLLAMA_CHAT_MODEL
     with _load_lock:
         if _backend is not None:
             return
-        _load_models()
+        import chromadb
 
+        have = _ollama_models() if USE_OLLAMA else None
+        chat = _pick_ollama_model(have) if have is not None else None
+        if have is not None and chat and _has(OLLAMA_EMBED_MODEL, have):
+            _backend = "ollama"
+            OLLAMA_CHAT_MODEL = chat
+            print(f"Engine: Ollama at {OLLAMA_URL} (GPU if available) — model {chat}")
+        else:
+            if have is not None:
+                print(f"Ollama is running but lacks the models it needs "
+                      f"(want one of {OLLAMA_MODEL_ORDER} + {OLLAMA_EMBED_MODEL}); "
+                      f"using the in-process engine instead.")
+            _backend = "llamacpp"
+            from llama_cpp import Llama
+            chat_format = "chatml" if "qwen" in LLM_PATH.name.lower() else "llama-3"
+            print(f"Engine: in-process llama-cpp (CPU, {N_THREADS} threads) — {LLM_PATH.name}")
+            print("Loading embedding model...")
+            _emb = Llama(model_path=str(EMB_PATH), embedding=True, n_ctx=2048,
+                         n_threads=N_THREADS, verbose=False)
+            print("Loading language model... this takes a moment")
+            _llm = Llama(model_path=str(LLM_PATH), n_ctx=8192, n_threads=N_THREADS,
+                         chat_format=chat_format, verbose=False)
 
-def _load_models():
-    global _llm, _emb, _col, _backend, OLLAMA_CHAT_MODEL
-    import chromadb
-
-    have = _ollama_models() if USE_OLLAMA else None
-    chat = _pick_ollama_model(have) if have is not None else None
-    if have is not None and chat and _has(OLLAMA_EMBED_MODEL, have):
-        _backend = "ollama"
-        OLLAMA_CHAT_MODEL = chat
-        print(f"Engine: Ollama at {OLLAMA_URL} (GPU if available) — model {chat}")
-    else:
-        if have is not None:
-            print(f"Ollama is running but lacks the models it needs "
-                  f"(want one of {OLLAMA_MODEL_ORDER} + {OLLAMA_EMBED_MODEL}); "
-                  f"using the in-process engine instead.")
-        _backend = "llamacpp"
-        from llama_cpp import Llama
-        n_threads = max(2, (os.cpu_count() or 4))
-        print(f"Engine: in-process llama-cpp (CPU) — {LLM_PATH.name}")
-        print("Loading embedding model...")
-        _emb = Llama(model_path=str(EMB_PATH), embedding=True, n_ctx=2048,
-                     n_threads=n_threads, verbose=False)
-        print("Loading language model... this takes a moment")
-        _llm = Llama(model_path=str(LLM_PATH), n_ctx=8192, n_threads=n_threads,
-                     chat_format=_chat_format_for(LLM_PATH), verbose=False)
-
-    db = chromadb.PersistentClient(path=str(DB_DIR))
-    _col = db.get_or_create_collection("onefs_docs")
-    print("Ready.")
+        db = chromadb.PersistentClient(path=str(DB_DIR))
+        _col = db.get_or_create_collection("onefs_docs")
+        print("Ready.")
 
 
 def _embed(text: str):
