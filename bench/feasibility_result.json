@@ -1,0 +1,32 @@
+{
+  "host": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "cores": 16,
+  "llama_cpp": "0.2.90",
+  "isa": {
+    "AVX2": true,
+    "AVX512": false,
+    "AVX512_VNNI": false,
+    "AVX512_BF16": false,
+    "BLAS": false,
+    "MATMUL_INT8": false
+  },
+  "ai_tier": "AVX2 only (consumer / prototype class)",
+  "prompt_tok": 2200,
+  "gen_tok": 300,
+  "runs": [
+    {
+      "threads": 6,
+      "wall_s": 51.2,
+      "prefill_tps": 55.2,
+      "gen_tps": 4.4,
+      "projected_answer_s": 107.6
+    },
+    {
+      "threads": 14,
+      "wall_s": 53.6,
+      "prefill_tps": 52.7,
+      "gen_tps": 4.7,
+      "projected_answer_s": 105.2
+    }
+  ]
+}
