@@ -13,6 +13,12 @@ REM      a full, cited answer comes back in ~12s instead of 2-3 minutes.
 REM ---------------------------------------------------------------------------
 set OLLAMA_LLM_LIBRARY=cuda_v12
 
+REM  Keep the model resident in VRAM for the whole session. Ollama's default
+REM  unloads it after 5 minutes idle, so the question you ask after talking for
+REM  a few minutes pays an ~8-10s reload on top of the answer (25s instead of
+REM  ~13s). -1 = never unload.
+set OLLAMA_KEEP_ALIVE=-1
+
 REM  Opt in to the Ollama/GPU engine (the default everywhere else is the
 REM  in-process CPU engine, so the office-laptop bundle is unaffected).
 set USE_OLLAMA=1
